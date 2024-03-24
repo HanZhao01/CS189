@@ -11,6 +11,7 @@ from sklearn.tree import DecisionTreeClassifier, export_graphviz
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.model_selection import cross_val_score
 from pydot import graph_from_dot_data
+from scipy.stats import mode
 import io
 
 import random
@@ -22,7 +23,7 @@ eps = 1e-5  # a small number
 class DecisionTree:
 
     #def __init__(self, max_depth=5, feature_labels=None, X = np.array([[]]), y = np.array([])):
-    def __init__(self, max_depth=5, feature_labels=None):
+    def __init__(self, max_depth=16, feature_labels=None):
         #self.X = X
         #self.y = y
         self.max_depth = max_depth
@@ -99,7 +100,7 @@ class DecisionTree:
         if y.size == 0:
             self.pred = -1
         elif y.size == 1:
-            self.pred = y[0]
+            self.pred = int(y[0])
         elif self.max_depth == 0:
             majority_value = self.majority(y)
             self.pred = majority_value
@@ -160,16 +161,20 @@ class DecisionTree:
             
 
     def predict(self, X):
-        if self.pred == -1:
+        if X.size == 0:
+            return None, None
+        elif self.pred == -1:
             #self.data = X
             #length_pred = self.count_size_2dArray(X)
             #self.pred = np.array([None for i in range(length_pred)])
-            return None, None
+            length_pred = self.count_size_2dArray(X)
+            pred = np.array([0 for i in range(length_pred)])
+            return np.atleast_2d(X), pred
         elif self.pred != None:
             self.data = X
             length_pred = self.count_size_2dArray(X)
-            self.pred = np.array([self.pred for i in range(length_pred)])
-            return np.atleast_2d(X), self.pred
+            pred = np.array([self.pred for i in range(length_pred)])
+            return np.atleast_2d(X), pred
         else:
             x0, idx0, x1, idx1 = self.split_test(X, self.split_idx, self.thresh)
             #left_data, left_pred = self.left.predict(X0)
@@ -181,9 +186,21 @@ class DecisionTree:
             left_data, left_pred = self.left.predict(x0)
             right_data, right_pred = self.right.predict(x1)
             #return self.concatenate(self.left.data, self.right.data, self.left.pred, self.right.pred)
-            return self.concatenate(left_data, right_data, left_pred, right_pred)
+            X_raw, y_raw = self.concatenate(left_data, right_data, left_pred, right_pred)
+            if X_raw is None and X is None:
+                print("detect both None")
+            if X_raw is None:
+                print("detect X_raw None")
+                return None, None
+            if X is None:
+                print("detect X None")
+            if X_raw is np.array([[None]]) or X is np.array([[None]]):
+                print("detect [[None]]")
+            if X_raw.shape[1] != X.shape[1]:
+                print("X, X_raw shape[1] mismatch")
+            return self.reorder_rows(np.atleast_2d(X), X_raw, y_raw)
 
-
+    # helper 1
     # input: Example numpy array x = np.array([4, 5, 1, 3, 2, 8, 9, 7, 6, 0, 1])
     # input: Given list of pairs of indices index_pairs = [(0, 1), (5, 6), (6, 7), (9, 10)]
     # output: Means of values in x for each pair of indices: [4.5 8.5 8.  0.5]
@@ -197,10 +214,13 @@ class DecisionTree:
         means_array = np.array(means)
         return means_array
 
+    # helper 2
     # concanate left data and right data, left labels and right labels, format is the same as design matrix and np.array y
     def concatenate(self, X1, X2, y1, y2):
-        if X1 is None or X2 is None:
-            return X1 or X2, y1 or y2
+        if X1 is None:
+            return np.atleast_2d(X2), y2
+        if X2 is None:
+            return np.atleast_2d(X1), y1
         X1 = np.atleast_2d(X1)
         X2 = np.atleast_2d(X2)
         #print("Shape of X1:", X1.shape)  # Debugging print
@@ -208,13 +228,15 @@ class DecisionTree:
         X_combined = np.concatenate((X1, X2), axis=0)
         y_combined = np.concatenate((y1, y2))
         return X_combined, y_combined
-
+    
+    # helper 3
     # calculate the majority number of an array 
     def majority(self, array):
         sum_of_elements = np.sum(array)
         majority_value = 1 if sum_of_elements > len(array) / 2 else 0
         return majority_value
 
+    # helper 4
     # calculate the number of Xi points in a leaf node 
     def count_size_2dArray(self, arr):
         if not isinstance(arr, np.ndarray):
@@ -225,6 +247,28 @@ class DecisionTree:
             return arr.shape[0]  # The number of rows (nested arrays)
         else:
             raise ValueError("Input must be either 1D or 2D numpy array")
+
+    # helper 5
+    # eg. given 
+    #X = np.array([[1, 2], [3, 4], [5, 6]])
+    #X_1 = np.array([[5, 6], [1, 2], [3, 4]])
+    #y_1 = np.array(['c', 'a', 'b'])
+    #return [[1 2] [3 4] [5 6]], ['a' 'b' 'c']
+    def reorder_rows(self, X, X_1, y_1):
+        X_1_reordered = np.empty_like(X_1)
+        y_1_reordered = np.empty_like(y_1)
+        for i, row in enumerate(X):
+            #if X_1.shape[1] != X.shape[1]:
+             #   print("detect mismatch row leangth")
+            #index = np.where((X_1 == row).all(axis=1))[0][0]
+            matching_indices = np.where((X_1 == row).all(axis=1))[0]
+            if matching_indices.size == 0:  # No matching row found
+                print(f"No matching row found for X row index {i}: {row}")
+            #    continue  # Skip to the next iteration
+            index = np.where((X_1 == row).all(axis=1))[0][0]
+            X_1_reordered[i] = X_1[index]
+            y_1_reordered[i] = y_1[index]
+        return X_1_reordered, y_1_reordered
 
     def __repr__(self):
         if self.max_depth == 0:
@@ -241,21 +285,40 @@ class BaggedTrees(BaseEstimator, ClassifierMixin):
             params = {}
         self.params = params
         self.n = n
-        self.decision_trees = [
-            DecisionTreeClassifier(random_state=i, **self.params)
-            for i in range(self.n)
-        ]
+        #self.decision_trees = [DecisionTreeClassifier(random_state=i, **self.params) for i in range(self.n)]
+        self.decision_trees = [DecisionTree() for i in range(self.n)]
+        self.tree = DecisionTree()
 
     def fit(self, X, y):
-       # for tree in self.decision_trees:
-         #   tree.fit(X, y)
-        pass
+        for tree in self.decision_trees:
+            X, y = self.generate_subsample(X)
+            tree.fit(X, y)
 
     def predict(self, X):
+        all_predictions = []
+        for tree in self.decision_trees:
+            data, pred = tree.predict(X)
+            all_predictions.append(pred)
+            #print(pred)
+        ys = np.array(all_predictions)
+        #print(ys)
+        return self.find_majority_values(ys)
 
-        #for tree in self.decision_trees:
-        pass
+    # helper 1
+    # sampling with replacement
+    def generate_subsample(self, X, y):
+        n_rows = X.shape[0]
+        random_indices = np.random.choice(n_rows, size=n_rows, replace=True)
+        X_subsample = X[random_indices, :]
+        y_subsample = y[random_indices]
+        return X_subsample, y_subsample
 
+    # helper 2
+    # find the majority yi value on all ys, return a vector y
+    def find_majority_values(self, ys):
+        stacked_ys = np.vstack(ys)
+        majority_values, _ = mode(stacked_ys, axis=0)
+        return majority_values.squeeze()
 
 
 class RandomForest(BaggedTrees):
@@ -270,14 +333,38 @@ class RandomForest(BaggedTrees):
 
 class BoostedRandomForest(RandomForest):
 
-    def fit(self, X, y):
-        # TODO
-        pass
-    
-    def predict(self, X):
-        # TODO
-        pass
+    def __init__(self, params=None, n=200, m=1):
+        self.random_indices = []
+        super().__init__(params=params, n=n, m=m)
 
+
+    def fit(self, X, y):
+        count = 0
+        for tree in self.decision_trees:
+            #X= self.select_random_features(X, self.m)
+            X, y = self.generate_subsample(X, y)
+            self.select_random_features(X, self.m)
+            X = X[:, self.random_indices[count]]
+            tree.fit(X, y)
+            count += 1
+
+    def predict(self, X):
+        all_predictions = []
+        for i in range(len(self.decision_trees)):
+            X = X[:, self.random_indices[i]]
+            data, pred = self.decision_trees[i].predict(X)
+            all_predictions.append(pred)
+        ys = np.array(all_predictions)
+        return self.find_majority_values(ys)
+    
+    def select_random_features(self, X, m):
+        d = X.shape[1]
+        # Check if m is greater than the number of available features
+        if m > d:
+            raise ValueError("m cannot be greater than the total number of features in X")
+        random_indices = np.random.choice(d, size=m, replace=False)
+        #X_new = X[:, random_indices]
+        self.random_indices.append(random_indices)
 
 def preprocess(data, fill_mode=True, min_freq=10, onehot_cols=[]):
     # fill_mode = False
