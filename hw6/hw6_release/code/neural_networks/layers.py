@@ -240,6 +240,7 @@ class Conv2D(Layer):
         #b = np.zeros((X_shape[0], self.n_out))
 
         self.parameters = OrderedDict({"W": W, "b": b}) # DO NOT CHANGE THE KEYS
+        #self.cache = OrderedDict({"Z": [], "X": [], "X_padded": []}) # customized by Zihan Zhao
         self.cache = OrderedDict({"Z": [], "X": []}) # cache for backprop
         self.gradients = OrderedDict({"W": np.zeros_like(W), "b": np.zeros_like(b)}) # parameter gradients initialized to zero
                                                                                      # MUST HAVE THE SAME KEYS AS `self.parameters`
@@ -338,12 +339,11 @@ class Conv2D(Layer):
                 x_slice = X_padded[:, h_start:h_end, w_start:w_end, :]
                 for cout in range(out_channels):
                     Z[:, i, j, cout] = np.sum(x_slice * W[..., cout], axis=(1, 2, 3)) + b[0, cout]
-                    #Z[:, i, j, cout] = np.sum(x_slice * W[:, :, :, cout]) + b[0, cout]
-                    #out[:, i, j, :] = np.einsum('ijkl,lkmn->ijmn', x_slice, W) + b[0, :]
-                    #'nijc,ijck->n'
 
         # cache any values required for backprop
+        #self.cache["X"] = X_padded
         self.cache["X"] = X_padded
+        #self.cache["X_padded"] = X_padded
         self.cache["Z"] = Z
         ### END YOUR CODE ###
         out = self.activation(Z)
@@ -365,6 +365,7 @@ class Conv2D(Layer):
         shape (batch_size, in_rows, in_cols, in_channels)
         """
         ### BEGIN YOUR CODE ##
+        #X = self.cache["X_padded"]
         X = self.cache["X"]
         Z = self.cache["Z"]
         W = self.parameters["W"]
@@ -376,57 +377,32 @@ class Conv2D(Layer):
         ### BEGIN YOUR CODE ###
         # X(batch_size, k1, k2, cin))
         # W(k1, k2, cin, cout)
-        #out_rows = (in_rows - kernel_height) // self.stride + 1
-        #out_cols = (in_cols - kernel_width) // self.stride + 1
-        out_rows = Z.shape[0]
-        out_cols = Z.shape[1]
+        out_rows = Z.shape[1]
+        out_cols = Z.shape[2]
         
         dLdZ = self.activation.backward(Z, dLdY)
+        print(dLdZ.shape)
+        print(Z.shape)
         dX = np.zeros_like(X)
         dLdW = np.zeros_like(W)
-        #dLdB = np.sum(dLdZ, axis=(0, 1, 2))
-        #print(b.shape)
         dLdB = np.zeros_like(b)
-        #print(b.shape)
-        #dLdbi = 
+        dLdB = np.sum(dLdZ, axis=(0, 1, 2))
         for d1 in range(out_rows):
             for d2 in range(out_cols):
                 for cin in range(in_channels):
-                    #h_start = d1 * self.stride
-                    #w_start = d2 * self.stride
-                    #h_end = h_start + out_rows
-                    #w_end = w_start + out_cols
-                    #x_slice = X[:, h_start:h_end, w_start:w_end, cin]
-                    
-                    # Compute dLdW for each filter
-                    # Reshape dLdY and X to 2D matrices to vectorize the dot product over batches
                     for cout in range(out_channels):
-                        #print(dLdZ[:, d1, d2, cout].shape)
-                        #print(dLdB[:, cout].shape)
-                        dLdB[:, cout] += np.sum(dLdZ[:, d1, d2, cout]) # still wrong
-                        
-                        #dLdW[i, j, :, cout] += x_slice * dLdZ[:, i:, j, cout], axis=(1, 2, 3))
-                        #Z[:, i, j, cout] = np.sum(x_slice * W[..., cout], axis=(1, 2, 3)) + b[0, cout]
                         for i in range(kernel_height):
                             for j in range(kernel_width):
-                                #dLdW[i, j, :, cout] += x_slice * dLdZ
-                                #print(X[:, d1+i, d2+j, cin].shape)
-                                #print(dLdZ[:, d1, d2, cout].shape)
-                                #print(dLdW[i, j, cin, cout].shape)
-                                #print(np.sum(X[:, d1+i, d2+j, cin] * dLdZ[:, d1, d2, cout], axis=0).shape)
-                                dLdW[i, j, :, cout] += np.sum(X[:, d1+i, d2+j, cin] * dLdZ[:, d1, d2, cout], axis=0) # This is correct
-                                #print(dX[:, d1 + i, d2 + j, :].shape)
-                                #print((W[i, j, cin, cout] * dLdZ[:, i, j, cout]).shape)
-                                dX[:, d1 + i, d2 + j, cin] += W[i, j, cin, cout] * dLdZ[:, i, j, cout] # This is correct
-                    #dLdZij = dLdZ[:, i, j, cout]
-                    #dLdW[i, j, :, cout] = X[]
+                                x_padded = d1 * self.stride + i
+                                y_padded = d2 * self.stride + j
+                                dX[:, x_padded, y_padded, cin] += W[i, j, cin, cout] * dLdZ[:, (x_padded-i)//self.stride, (y_padded-j)//self.stride, cout]
+                                #dLdW[i, j, :, cout] += np.sum(X[:, d1+i, d2+j, cin] * dLdZ[:, d1, d2, cout], axis=0)
+                                #dLdW[i, j, cin, cout] += np.sum(X[:, d1+i, d2+j, cin] * dLdZ[:, d1, d2, cout], axis=0)  # This is correct
+                                dLdW[i, j, cin, cout] += np.sum(X[:, x_padded, y_padded, cin] * dLdZ[:, d1, d2, cout], axis=0)
+                                #dX[:, d1 + i, d2 + j, cin] += W[i, j, cin, cout] * dLdZ[:, i, j, cout] # This is correct
         self.gradients["W"] = dLdW
         self.gradients["b"] = dLdB
-        # perform a backward pass
-
-        ### END YOUR CODE ###
         dX_original = dX[:, self.pad[0]:-self.pad[0], self.pad[1]:-self.pad[1], :]
-
         return dX_original
 
 class Pool2D(Layer):
